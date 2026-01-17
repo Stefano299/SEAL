@@ -1,7 +1,7 @@
 #ifndef PACKET_ASSEMBLER_H
 #define PACKET_ASSEMBLER_H
 
-#include "common.h"
+#include "message.h"
 #include <cstdint>
 #include <vector>
 

@@ -8,7 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(SEAL 4.1.2 CONFIG REQUIRED)
 
 add_executable(SEALProject
-    main.cpp packet_assembler.cpp
+    main.cpp message.cpp packet_assembler.cpp
 )
 
 target_include_directories(SEALProject PRIVATE incs)
