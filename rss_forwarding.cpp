@@ -69,6 +69,43 @@ struct ip_addr {
     uint32_t d;
 };
 
+using namespace seal;
+
+// Classe per gestire operazioni omomorifiche
+class HEContext {
+public:
+    //Uso puntatori per facilitare l'inizializzazione nel costruttore
+    seal::SEALContext* context;
+    Evaluator* evaluator;
+    BatchEncoder* encoder;
+    
+    HEContext() {
+        // Inizializzazione di SEAL
+        EncryptionParameters parms(scheme_type::bfv);
+        parms.set_poly_modulus_degree(2048);
+        parms.set_coeff_modulus(CoeffModulus::BFVDefault(2048));
+        parms.set_plain_modulus(65537);
+        
+        context = new seal::SEALContext(parms);
+        evaluator = new Evaluator(*context);
+        encoder = new BatchEncoder(*context);
+    }
+    
+    ~HEContext() {
+        delete encoder;
+        delete evaluator;
+        delete context;
+    }
+    
+    // Somma un numero in chiaro al ciphertext
+    void add_plain_number(Ciphertext& ct, uint64_t number) {
+        std::vector<uint64_t> values(encoder->slot_count(), number);
+        Plaintext ptx;
+        encoder->encode(values, ptx);
+        evaluator->add_plain_inplace(ct, ptx);
+    }
+};
+
 /// Structure containing the full configuration
 /// of this application
 struct app_005_cfg
@@ -872,7 +909,8 @@ static struct worker_args get_worker_args(struct app_005_cfg &cfg)
 
     return wargs;
 }
-static PacketAssembler assembler; //Sennò ogni volta se creo uno
+static PacketAssembler assembler;
+static HEContext* he_ctx = nullptr;  // Inizializzato nel main, per evitare errore all'avvio
 // poll for input packets from the in_* direction
 // and send them to the out_* direction
 inline static doca_error_t poll_interface_and_fwd(
@@ -916,11 +954,22 @@ inline static doca_error_t poll_interface_and_fwd(
             continue;
         }
 
-        //Devo fare cast da uint8_t a const char per come è scritto packet_assembler (in cui tengo char per semplicità)
+        // Devo fare cast da uint8_t a const char per come è scritto packet_assembler (in cui tengo char per semplicità)
         auto result = assembler.process_packet((const char *)udp_payload, udp_payload_len);
         if(result.complete){
-            printf("Pacchetto completato\n");
+            printf("Pacchetto %d assemblato\n", result.message_id);
+            
+            // Si ricrea oggetto SEAL partendo dal buffer
+            std::stringstream ss(std::string(result.data.begin(), result.data.end()));
+            Ciphertext ct;
+            ct.load(*he_ctx->context, ss);
+            
+            // Somma omomorfica con una costante
+            he_ctx->add_plain_number(ct, 13291);
+            printf("Somma omomorfica +13291 completata\n");
         }
+        
+
     }
 
     // Forward packets 
@@ -1012,6 +1061,10 @@ int main(int argc, char *argv[])
     // (pipes are associated with ports)
     result = configure_doca(cfg);
     CHECK_DERR(result);
+
+    // Inizializza contesto SEAL per operazioni omomorifiche
+    he_ctx = new HEContext();
+    printf("[SEAL] Contesto HE inizializzato\n");
 
     auto w_args = get_worker_args(cfg);
 
