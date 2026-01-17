@@ -56,7 +56,7 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Ciphertext generato: " << ciphertext_str.size() << " bytes" << std::endl;
 
-    // Porta UDP destinazione
+    // Porta UDP di destinazione
     const uint16_t port = 9000;
 
     // Creazione messaggio con socket incapsulato

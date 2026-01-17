@@ -2,3 +2,5 @@ build/
 .cache/
 example.cu
 .gitignore
+receiver.cpp
+
