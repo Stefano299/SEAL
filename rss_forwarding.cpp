@@ -912,8 +912,9 @@ static struct worker_args get_worker_args(struct app_005_cfg &cfg)
     return wargs;
 }
 
-static PacketAssembler assembler;
-static HEContext* he_ctx = nullptr;  // Inizializzato nel main, per evitare errore all'avvio
+// Static senza multi-threading, thread_local con multi-threading (per evitare race condition)
+thread_local PacketAssembler assembler;
+thread_local HEContext* he_ctx = nullptr;  // Inizializzato nel main, per evitare errore all'avvio
 // poll for input packets from the in_* direction
 // and send them to the out_* direction
 inline static doca_error_t poll_interface_and_fwd(
@@ -925,7 +926,7 @@ inline static doca_error_t poll_interface_and_fwd(
     uint16_t nb_rx = rte_eth_rx_burst(in_port, in_queue, mbufs, burst_size);
 
     if(nb_rx > 0){
-        printf("Ricevuti %u pacchetti \n", nb_rx);
+        printf("[Thread %d] Ricevuti %u pacchetti\n", rte_lcore_index(rte_lcore_id()), nb_rx);
     }
 
     for (uint16_t i = 0; i < nb_rx; i++) {
@@ -961,7 +962,7 @@ inline static doca_error_t poll_interface_and_fwd(
         // Devo fare cast da uint8_t a const char per come è scritto packet_assembler (in cui tengo char per semplicità)
         auto result = assembler.process_packet((const char *)udp_payload, udp_payload_len);
         if(result.complete){
-            printf("Pacchetto %d assemblato\n", result.message_id);
+            printf("[Thread %d] Pacchetto %d assemblato\n", rte_lcore_index(rte_lcore_id()), result.message_id);
             
             // Si ricrea oggetto SEAL partendo dal buffer
             std::stringstream ss(std::string(result.data.begin(), result.data.end()));
@@ -1129,6 +1130,9 @@ static int my_dpdk_worker(void *my_dpdk_worker_arg)
         return 0;
     }
 
+    // Inizializzazione del contesto SEAL per ogni thread separato
+    he_ctx = new HEContext();
+
     // loop until exit is requested!
     while (!exit_request.load())
     {
@@ -1147,6 +1151,9 @@ static int my_dpdk_worker(void *my_dpdk_worker_arg)
         );
         CHECK_DERR(result);
     }
+
+    delete he_ctx;
+    he_ctx = nullptr;
 
     return 0;
 }
@@ -1181,9 +1188,6 @@ int main(int argc, char *argv[])
     result = configure_doca(cfg);
     CHECK_DERR(result);
 
-    // Inizializza contesto SEAL per operazioni omomorifiche
-    he_ctx = new HEContext();
-    printf("[SEAL] Contesto HE inizializzato\n");
 
     auto w_args = get_worker_args(cfg);
 
