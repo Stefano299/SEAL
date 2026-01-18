@@ -1,4 +1,4 @@
-// Receiver, da eseguire in nsp0
+// Receiver, da eseguire in nsp1
 
 #include <iostream>
 #include <fstream>

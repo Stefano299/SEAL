@@ -321,13 +321,14 @@ static doca_error_t configure_dpdk_ports_and_queues(struct app_005_cfg::dpdk &dp
     }
 
     // check the number of available threads:
-    ret = rte_lcore_count();
+    ret = rte_lcore_count();  // Dipende dall'opzione di lancio
     CHECK_NNEG(ret);
     // number of threads activated by DPDK: it is
     // important because
     dpdk.nb_dpdk_threads = ret;
     // the number of useful threads is the minimum between
     // the number of expected queues and the CPU count
+    // Non ha senso avere più code che thread
     dpdk.nb_rxtx_queues = std::min(dpdk.nb_rxtx_queues, ret);
 
     // handling packets in software requires packet buffers
@@ -900,6 +901,7 @@ static struct worker_args get_worker_args(struct app_005_cfg &cfg)
         wargs.confs[cpu].used = (cpu < cfg.dpdk.nb_rxtx_queues);
         if (wargs.confs[cpu].used)
         {
+            //Ogni thread gestisce la coda col suo stesso id
             wargs.confs[cpu].ingress.port_id = cfg.dpdk.ingress.port_id;
             wargs.confs[cpu].egress.port_id = cfg.dpdk.egress.port_id;
             wargs.confs[cpu].ingress.queue_id = cfg.dpdk.rxtx_queues[cpu];
@@ -909,6 +911,7 @@ static struct worker_args get_worker_args(struct app_005_cfg &cfg)
 
     return wargs;
 }
+
 static PacketAssembler assembler;
 static HEContext* he_ctx = nullptr;  // Inizializzato nel main, per evitare errore all'avvio
 // poll for input packets from the in_* direction
@@ -982,16 +985,19 @@ inline static doca_error_t poll_interface_and_fwd(
             printf("Frammentazione in %u chunks\n", total_chunks);
             
             // Configuro gli indirizzi che verranno usati per inviare i singoli frammenti
-            // MAC sorgente: porta p0 di DPU2 (en3f0pf0sf0), da cui viene inviato il pacchetto
-            struct rte_ether_addr src_mac = {{0x52, 0xaa, 0x10, 0xb2, 0xfe, 0x28}};
-            // MAC di destinazione: enp3s0f0s0 in nsp0 (DPU1)
-            struct rte_ether_addr dst_mac = {{0x02, 0xa0, 0x8e, 0x5a, 0x34, 0x32}};
+
+            /*Non vanno modificati: nel mio test la DPU1 invia un pacchetto dal nsp0 
+            al nsp1, il quale viene intercettato dalla DPU2. Gli indirizzi di destinazione,
+            perciò, puntano già al nsp1 della DPU1! CAMBIO PERO' LA PORTA DI DESTINAZIONE UDP!*/
+            struct rte_ether_addr src_mac = eth->src_addr;
+            struct rte_ether_addr dst_mac = eth->dst_addr;
             
-            uint32_t src_ip = BE_IPV4_ADDR(192, 168, 28, 11);  // IP sorgente fisso (nsp1, il sender originale)
+            uint32_t src_ip = ip->src_addr;  // IP sorgente fisso (nsp1, il sender originale)
             uint32_t dst_ip = ip->dst_addr;  // IP di destinazione del pacchetto originale (nsp0 = 192.168.28.10)
             
-            uint16_t src_port = udp->dst_port;
-            // Porta di destinazione fissa: 9001 (RECEIVE_PORT in receiver.cpp)
+            uint16_t src_port = udp->src_port;
+            /*Potrei lasciarla invariata, ma ho visto che se lo faccio il receiver
+            intercetta i messaggi inviati dalla DPU1 prima che la DPU2 li elabori*/
             uint16_t dst_port = rte_cpu_to_be_16(9001);
             
             // Invia ogni chunk

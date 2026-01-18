@@ -1,12 +1,5 @@
-// Sender, da eseguire in nsp1
+// Sender, da eseguire in nsp0
 
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <thread>
-#include <chrono>
-#include <sstream>
-#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include "seal/seal.h"
