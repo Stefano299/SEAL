@@ -12,7 +12,7 @@
 
 using namespace seal;
 
-const uint16_t RX_PORT = 9001;
+const uint16_t RX_PORT = 8999; // Sopra 9000 rischia di essere tra le porte inviate da sender
 
 int main() {
     // Setup SEAL

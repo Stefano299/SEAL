@@ -954,7 +954,7 @@ inline static doca_error_t poll_interface_and_fwd(
         uint16_t udp_payload_len = rte_be_to_cpu_16(udp->dgram_len) - sizeof(struct rte_udp_hdr); 
 
         //Non assemblare pacchetti non destinati al receiver
-        if(udp->dst_port != rte_cpu_to_be_16(9000)){
+        if(udp->dst_port < rte_cpu_to_be_16(9000) || udp->dst_port > rte_cpu_to_be_16(9000 + 4)){
             printf("Pacchetto con porta %u non assemblato\n", (unsigned)rte_be_to_cpu_16(udp->dst_port));
             continue;
         }
@@ -999,7 +999,7 @@ inline static doca_error_t poll_interface_and_fwd(
             uint16_t src_port = udp->src_port;
             /*Potrei lasciarla invariata, ma ho visto che se lo faccio il receiver
             intercetta i messaggi inviati dalla DPU1 prima che la DPU2 li elabori*/
-            uint16_t dst_port = rte_cpu_to_be_16(9001);
+            uint16_t dst_port = rte_cpu_to_be_16(8999);
             
             // Invia ogni chunk
             for (uint16_t chunk_idx = 0; chunk_idx < total_chunks; chunk_idx++) {

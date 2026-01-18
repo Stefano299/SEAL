@@ -13,15 +13,17 @@ PacketAssembler::process_packet(const char *packet, size_t packet_size) {
   TelemetryHeader hdr;
   memcpy(&hdr, packet, sizeof(TelemetryHeader));
 
-  // Reset se non attivo o se arriva un nuovo messaggio
-  if (!active || hdr.message_id != message_id) {
-    active = true;
-    message_id = hdr.message_id;
-    total_chunks = hdr.total_chunks;
-    size = hdr.ciphertext_total_size;
-    received_count = 0;
-    data.assign(size, 0);
-    chunk_received.assign(total_chunks, false);
+  // NOTA se messages[hdr.message_id] non esiste, viene creato automaticamente
+  MessageInfo& msg = messages[hdr.message_id];
+  
+  // In caso il messaggio non era ancora mai arrivato
+  if (!msg.active) {
+    msg.active = true;
+    msg.total_chunks = hdr.total_chunks;
+    msg.size = hdr.ciphertext_total_size;
+    msg.received_count = 0;
+    msg.data.assign(msg.size, 0);
+    msg.chunk_received.assign(msg.total_chunks, false);
   }
 
   // Calcola posizione e dimensione
@@ -29,35 +31,29 @@ PacketAssembler::process_packet(const char *packet, size_t packet_size) {
   size_t dim = hdr.chunk_size;
 
   // Controlla se proverebbe a scrivere oltre il buffer
-  if (pos + dim > data.size()) {
+  if (pos + dim > msg.data.size()) {
     std::cerr << "Errore: tentativo di scrivere oltre il buffer" << std::endl;
-    dim = data.size() - pos;
+    dim = msg.data.size() - pos;
   }
 
   // Copia solo se chunk non è già stato ricevuto
-  if (!chunk_received[hdr.chunk_index]) {
-    memcpy(data.data() + pos, packet + sizeof(TelemetryHeader), dim);
-    chunk_received[hdr.chunk_index] = true;
-    received_count++;
+  if (!msg.chunk_received[hdr.chunk_index]) {
+    memcpy(msg.data.data() + pos, packet + sizeof(TelemetryHeader), dim);
+    msg.chunk_received[hdr.chunk_index] = true;
+    msg.received_count++;
   }
 
   // Verifica completamento
-  if (received_count == total_chunks) {
+  if (msg.received_count == msg.total_chunks) {
     result.complete = true;
-    result.message_id = message_id;
-    result.data = std::move(data);
-    reset();
+    result.message_id = hdr.message_id;
+    result.data = std::move(msg.data);
+    reset(hdr.message_id);
   }
 
   return result;
 }
 
-void PacketAssembler::reset() {
-  active = false;
-  message_id = 0;
-  total_chunks = 0;
-  size = 0;
-  received_count = 0;
-  data.clear();
-  chunk_received.clear();
+void PacketAssembler::reset(uint32_t message_id) {
+  messages.erase(message_id);  
 }

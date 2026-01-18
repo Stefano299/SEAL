@@ -4,6 +4,7 @@
 #include "message.h"
 #include <cstdint>
 #include <vector>
+#include <unordered_map>
 
 // Classe per l'assemblaggio di chunk in un messaggio (in ricezione)
 class PacketAssembler {
@@ -12,31 +13,29 @@ public:
   struct AssemblyResult {
     bool complete;
     uint32_t message_id;
-    std::vector<char> data; // I dati dopo che è stato completato
+    std::vector<char> data; // Se il messaggio è stato completato contiene i dati assemblati
   };
 
-  PacketAssembler()
-      : active(false), message_id(0), total_chunks(0), size(0),
-        received_count(0) {}
+  // Struttura necessaria per tenere traccia di più pacchetti contemporaneamente
+  struct MessageInfo {
+    bool active = false;
+    uint16_t total_chunks = 0;
+    uint32_t size = 0;
+    uint32_t received_count = 0;
+    std::vector<char> data;
+    std::vector<bool> chunk_received;
+  };
+
+  PacketAssembler() = default;
+
   // Processa un pacchetto ricevuto (buffer con header + payload)
   AssemblyResult process_packet(const char *packet, size_t packet_size);
 
-  // Resetta lo stato dell'assemblatore
-  void reset();
-
-  bool is_active() const { return active; }
-  uint32_t current_message_id() const { return message_id; }
-  uint32_t get_received_count() const { return received_count; }
-  uint16_t get_total_chunks() const { return total_chunks; }
+  // Resetta lo stato per un determinato messaggio
+  void reset(uint32_t message_id);
 
 private:
-  bool active;
-  uint32_t message_id;
-  uint16_t total_chunks;
-  uint32_t size;
-  uint32_t received_count;
-  std::vector<char> data;
-  std::vector<bool> chunk_received;
+  std::unordered_map<uint32_t, MessageInfo> messages;
 };
 
 #endif
