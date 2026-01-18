@@ -949,6 +949,7 @@ inline static doca_error_t poll_interface_and_fwd(
         //lunghezza dei singoli frammenti
         uint16_t udp_payload_len = rte_be_to_cpu_16(udp->dgram_len) - sizeof(struct rte_udp_hdr); 
 
+        //Non assemblare pacchetti non destinati al receiver
         if(udp->dst_port != rte_cpu_to_be_16(9000)){
             printf("Pacchetto con porta %u non assemblato\n", (unsigned)rte_be_to_cpu_16(udp->dst_port));
             continue;
@@ -980,7 +981,14 @@ inline static doca_error_t poll_interface_and_fwd(
             uint16_t total_chunks = (total_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
             printf("Frammentazione in %u chunks\n", total_chunks);
             
-            //TODO set di indirizzi per il pacchetto di risposta
+            // Configuro gli indirizzi che verranno usati per inviare i singoli frammenti
+            // Indirizzo MAC di nsp1 (DPU1), trovato eseguendo il comando "ip netns exec nsp1 cat" sulla DPU1
+            struct rte_ether_addr src_mac = eth->dst_addr;  // MAC della porta locale
+            // MAC di enp3s0f1s0 in nsp1 (DPU1)
+            struct rte_ether_addr dst_mac = {{0x02, 0x27, 0x6f, 0xf5, 0x69, 0xa2}};
+            
+            uint32_t src_ip = ip->dst_addr;  // Quello a cui era destinato il pacchetto
+            uint32_t dst_ip = BE_IPV4_ADDR(192, 168, 28, 11);  // IP di nsp1 su DPU1
             
             uint16_t src_port = udp->dst_port;
             // Porta di destinazione fissa: 9001 (RECEIVE_PORT in receiver.cpp)
@@ -1021,7 +1029,7 @@ inline static doca_error_t poll_interface_and_fwd(
                 struct rte_ether_hdr *eth_hdr = (struct rte_ether_hdr *)pkt_data;
                 eth_hdr->src_addr = src_mac;
                 eth_hdr->dst_addr = dst_mac;
-                eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
+                eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4); //Dice che il payload ethernet contiene un pacchetto IPv4
                 
                 // IP header
                 struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1); //Scorro nel buffer pkt_data...
@@ -1031,9 +1039,9 @@ inline static doca_error_t poll_interface_and_fwd(
                 ip_hdr->total_length = rte_cpu_to_be_16(sizeof(struct rte_ipv4_hdr) + 
                                                         sizeof(struct rte_udp_hdr) + 
                                                         payload_size);
-                ip_hdr->packet_id = 0;
+                ip_hdr->packet_id = 0;  //Non uso la frammentazione a livello IP
                 ip_hdr->fragment_offset = 0;
-                ip_hdr->time_to_live = 64;
+                ip_hdr->time_to_live = 64; //Standard
                 ip_hdr->next_proto_id = IPPROTO_UDP;
                 ip_hdr->src_addr = src_ip;
                 ip_hdr->dst_addr = dst_ip;
@@ -1073,7 +1081,7 @@ inline static doca_error_t poll_interface_and_fwd(
             printf("Tutti i %u chunks inviati\n", total_chunks);
         }
         
-        //rte_eth_tx_burst dovrebbe occuparsi di liberare la memoria allocata  per il mbuf
+        //rte_eth_tx_burst dovrebbe occuparsi di liberare la memoria allocata per il mbuf
 
     }
 
