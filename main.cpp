@@ -17,7 +17,8 @@ using namespace seal;
 const uint16_t RECEIVE_PORT = 9001;
 
 // Thread per la ricezione e riassemblaggio dei pacchetti
-void receiver_thread() {
+// Riceve puntatori al contesto SEAL per poter decriptare
+void receiver_thread(SEALContext* context, Decryptor* decryptor, BatchEncoder* encoder) {
     PacketAssembler assembler;
     
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
@@ -55,7 +56,20 @@ void receiver_thread() {
             
             if (result.complete) {
                 std::cout << "[RECEIVER] Messaggio " << result.message_id 
-                          << " riassemblato" << std::endl;
+                          << " riassemblato (" << result.data.size() << " bytes)" << std::endl;
+                
+                // Deserializza il ciphertext ricevuto
+                std::stringstream ss(std::string(result.data.begin(), result.data.end()));
+                Ciphertext received_ct;
+                received_ct.load(*context, ss);
+
+                Plaintext decrypted_ptx;
+                decryptor->decrypt(received_ct, decrypted_ptx);
+
+                std::vector<uint64_t> values;
+                encoder->decode(decrypted_ptx, values);
+
+                std::cout << "[RECEIVER] Messaggio decriptato: " << values[0] << std::endl;
             }
         }
     }
@@ -87,6 +101,7 @@ int main(int argc, char* argv[]) {
     uint32_t n_messages = static_cast<uint32_t>(std::atoi(argv[3]));
 
     Encryptor encryptor(context, public_key);
+    Decryptor decryptor(context, secret_key);  // Per decriptare i messaggi ricevuti
     BatchEncoder encoder(context);
 
     if (rate <= 0) {
@@ -110,8 +125,8 @@ int main(int argc, char* argv[]) {
 
     const uint16_t port = 9000;
 
-    // Avvio thread di ricezione
-    std::thread rx_thread(receiver_thread);
+    // Avvio thread di ricezione con contesto SEAL per decriptazione
+    std::thread rx_thread(receiver_thread, &context, &decryptor, &encoder);
 
     // Invio messaggi (codice originale)
     Message msg(ciphertext_str, 1);

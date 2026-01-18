@@ -7,12 +7,33 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(SEAL 4.1.2 CONFIG REQUIRED)
 
+# Target originale (main.cpp, con sender e receiver nello stesso processo)
 add_executable(SEALProject
     main.cpp message.cpp packet_assembler.cpp
 )
-
 target_include_directories(SEALProject PRIVATE incs)
 target_link_libraries(SEALProject PRIVATE SEAL::seal)
+
+# Sender (da eseguire in nsp0)
+add_executable(sender
+    sender.cpp message.cpp packet_assembler.cpp
+)
+target_include_directories(sender PRIVATE incs)
+target_link_libraries(sender PRIVATE SEAL::seal)
+
+# Receiver (da eseguire in nsp1)
+add_executable(receiver
+    receiver.cpp packet_assembler.cpp
+)
+target_include_directories(receiver PRIVATE incs)
+target_link_libraries(receiver PRIVATE SEAL::seal)
+
+# Keygen (eseguire una volta sola prima di receiver e sender)
+add_executable(keygen
+    keygen.cpp
+)
+target_include_directories(keygen PRIVATE incs)
+target_link_libraries(keygen PRIVATE SEAL::seal)
 
 add_compile_options(
   -Wall -Wextra -Werror -pedantic

@@ -982,13 +982,13 @@ inline static doca_error_t poll_interface_and_fwd(
             printf("Frammentazione in %u chunks\n", total_chunks);
             
             // Configuro gli indirizzi che verranno usati per inviare i singoli frammenti
-            // Indirizzo MAC di nsp1 (DPU1), trovato eseguendo il comando "ip netns exec nsp1 cat" sulla DPU1
-            struct rte_ether_addr src_mac = eth->dst_addr;  // MAC della porta locale
-            // MAC di enp3s0f1s0 in nsp1 (DPU1)
-            struct rte_ether_addr dst_mac = {{0x02, 0x27, 0x6f, 0xf5, 0x69, 0xa2}};
+            // MAC sorgente: porta p0 di DPU2 (en3f0pf0sf0), da cui viene inviato il pacchetto
+            struct rte_ether_addr src_mac = {{0x52, 0xaa, 0x10, 0xb2, 0xfe, 0x28}};
+            // MAC di destinazione: enp3s0f0s0 in nsp0 (DPU1)
+            struct rte_ether_addr dst_mac = {{0x02, 0xa0, 0x8e, 0x5a, 0x34, 0x32}};
             
-            uint32_t src_ip = ip->dst_addr;  // Quello a cui era destinato il pacchetto
-            uint32_t dst_ip = BE_IPV4_ADDR(192, 168, 28, 11);  // IP di nsp1 su DPU1
+            uint32_t src_ip = BE_IPV4_ADDR(192, 168, 28, 11);  // IP sorgente fisso (nsp1, il sender originale)
+            uint32_t dst_ip = ip->dst_addr;  // IP di destinazione del pacchetto originale (nsp0 = 192.168.28.10)
             
             uint16_t src_port = udp->dst_port;
             // Porta di destinazione fissa: 9001 (RECEIVE_PORT in receiver.cpp)

@@ -96,7 +96,7 @@ int32_t Message::send() {
 
     }
     
-    std::cout << "Messaggio ID " << message_id << " completato" << std::endl;
+    std::cout << "Invio del messaggio " << message_id << " completato" << std::endl;
     return static_cast<int32_t>(num_chunks);
 }
 
