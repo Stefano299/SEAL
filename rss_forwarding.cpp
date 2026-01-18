@@ -967,8 +967,113 @@ inline static doca_error_t poll_interface_and_fwd(
             // Somma omomorfica con una costante
             he_ctx->add_plain_number(ct, 13291);
             printf("Somma omomorfica +13291 completata\n");
+            
+            // Si prepara il buffer da inviare
+            std::stringstream result_ss;
+            ct.save(result_ss);
+            std::string ciphertext_str = result_ss.str();
+            printf("Ciphertext risultante: %zu bytes\n", ciphertext_str.size());
+            
+            // Frammentazione e invio indietro
+            // Non uso la classe Message in quanto essa è fatta per l'invio con uso di socket
+            uint32_t total_size = ciphertext_str.size();
+            uint16_t total_chunks = (total_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
+            printf("Frammentazione in %u chunks\n", total_chunks);
+            
+            //TODO set di indirizzi per il pacchetto di risposta
+            
+            uint16_t src_port = udp->dst_port;
+            // Porta di destinazione fissa: 9001 (RECEIVE_PORT in receiver.cpp)
+            uint16_t dst_port = rte_cpu_to_be_16(9001);
+            
+            // Invia ogni chunk
+            for (uint16_t chunk_idx = 0; chunk_idx < total_chunks; chunk_idx++) {
+                // Calcola dimensione del chunk corrente
+                uint32_t offset = chunk_idx * CHUNK_SIZE;
+                uint16_t current_chunk_size = std::min((uint32_t)CHUNK_SIZE, total_size - offset);
+                
+                // Alloca mbuf per il pacchetto di risposta
+                struct rte_mbuf *response_mbuf = rte_pktmbuf_alloc(mbuf->pool);
+                if (!response_mbuf) {
+                    printf("Errore allocazione mbuf per chunk %u\n", chunk_idx);
+                    continue;
+                }
+                
+                // Preparo il telemetry header (si trova in message.h)
+                TelemetryHeader tel_hdr;
+                tel_hdr.message_id = result.message_id;
+                tel_hdr.total_chunks = total_chunks;
+                tel_hdr.chunk_index = chunk_idx;
+                tel_hdr.ciphertext_total_size = total_size;
+                tel_hdr.chunk_size = current_chunk_size;
+                
+                // Calcolo dimensioni
+                uint16_t payload_size = sizeof(TelemetryHeader) + current_chunk_size;
+                uint16_t total_pkt_size = sizeof(struct rte_ether_hdr) + 
+                                         sizeof(struct rte_ipv4_hdr) + 
+                                         sizeof(struct rte_udp_hdr) + 
+                                         payload_size;
+                
+                // Costruisco il pacchetto
+                uint8_t *pkt_data = rte_pktmbuf_mtod(response_mbuf, uint8_t *);
+                //Ogni header viene scritto nel buffer partendo dall'offset 0
+                // Ethernet header
+                struct rte_ether_hdr *eth_hdr = (struct rte_ether_hdr *)pkt_data;
+                eth_hdr->src_addr = src_mac;
+                eth_hdr->dst_addr = dst_mac;
+                eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
+                
+                // IP header
+                struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1); //Scorro nel buffer pkt_data...
+                memset(ip_hdr, 0, sizeof(struct rte_ipv4_hdr));
+                ip_hdr->version_ihl = 0x45;  // IPv4
+                ip_hdr->type_of_service = 0;
+                ip_hdr->total_length = rte_cpu_to_be_16(sizeof(struct rte_ipv4_hdr) + 
+                                                        sizeof(struct rte_udp_hdr) + 
+                                                        payload_size);
+                ip_hdr->packet_id = 0;
+                ip_hdr->fragment_offset = 0;
+                ip_hdr->time_to_live = 64;
+                ip_hdr->next_proto_id = IPPROTO_UDP;
+                ip_hdr->src_addr = src_ip;
+                ip_hdr->dst_addr = dst_ip;
+                ip_hdr->hdr_checksum = 0;
+                ip_hdr->hdr_checksum = rte_ipv4_cksum(ip_hdr);
+                
+                // UDP header
+                struct rte_udp_hdr *udp_hdr = (struct rte_udp_hdr *)(ip_hdr + 1);
+                udp_hdr->src_port = src_port;
+                udp_hdr->dst_port = dst_port;
+                udp_hdr->dgram_len = rte_cpu_to_be_16(sizeof(struct rte_udp_hdr) + payload_size);
+                udp_hdr->dgram_cksum = 0;  // Opzionale per UDP
+                
+                // Payload: header telemetria + chunk dati (Come in message.cpp)
+                uint8_t *payload = (uint8_t *)(udp_hdr + 1);
+                memcpy(payload, &tel_hdr, sizeof(TelemetryHeader));
+                memcpy(payload + sizeof(TelemetryHeader), 
+                       ciphertext_str.data() + offset, 
+                       current_chunk_size);
+                
+                // Imposta lunghezza pacchetto
+                response_mbuf->data_len = total_pkt_size; //Lunghezza dati in questo mbuf
+                response_mbuf->pkt_len = total_pkt_size; //Lunghezza pacchetto (che può essere distribuito su più mbuf)
+                
+                // Invia il pacchetto sulla porta di USCITA (out_port = P1)
+                // Il pacchetto arriva su P0, viene elaborato, e esce su P1 verso DPU1:P1
+                uint16_t sent = rte_eth_tx_burst(out_port, out_queue, &response_mbuf, 1);
+                if (sent == 0) {
+                    printf("Errore invio chunk %u\n", chunk_idx);
+                    rte_pktmbuf_free(response_mbuf);
+                } else {
+                    printf("Chunk %u/%u inviato (payload di %u bytes)\n", 
+                           chunk_idx + 1, total_chunks, current_chunk_size);
+                }
+            }
+            
+            printf("Tutti i %u chunks inviati\n", total_chunks);
         }
         
+        //rte_eth_tx_burst dovrebbe occuparsi di liberare la memoria allocata  per il mbuf
 
     }
 
