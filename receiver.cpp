@@ -9,17 +9,16 @@
 #include <unistd.h>
 #include "seal/seal.h"
 #include "packet_assembler.h"
+#include "config.h"
 
 using namespace seal;
 
-const uint16_t RX_PORT = 8999; // Sopra 9000 rischia di essere tra le porte inviate da sender
-
 int main() {
-    // Setup SEAL
+    // Setup SEAL con parametri da config.h
     EncryptionParameters parms(scheme_type::bfv);
-    parms.set_poly_modulus_degree(2048);
-    parms.set_coeff_modulus(CoeffModulus::BFVDefault(2048));
-    parms.set_plain_modulus(65537);
+    parms.set_poly_modulus_degree(POLY_MODULUS_DEGREE);
+    parms.set_coeff_modulus(CoeffModulus::BFVDefault(POLY_MODULUS_DEGREE));
+    parms.set_plain_modulus(PLAIN_MODULUS);
     SEALContext context(parms);
 
     // Carica secret key da file

@@ -50,6 +50,7 @@
 #include <seal/seal.h>
 #include "packet_assembler.h"
 #include "message.h"
+#include "config.h"
 // error check macros:
 #define CHECK_NNEG(res) if ((res) < 0) { std::cerr << "result = " << (res) << std::endl; abort(); }
 #define CHECK_DERR(derr) if ((derr) != DOCA_SUCCESS) \
@@ -80,11 +81,11 @@ public:
     BatchEncoder* encoder;
     
     HEContext() {
-        // Inizializzazione di SEAL
+        // Inizializzazione di SEAL con parametri da config.h
         EncryptionParameters parms(scheme_type::bfv);
-        parms.set_poly_modulus_degree(2048);
-        parms.set_coeff_modulus(CoeffModulus::BFVDefault(2048));
-        parms.set_plain_modulus(65537);
+        parms.set_poly_modulus_degree(POLY_MODULUS_DEGREE);
+        parms.set_coeff_modulus(CoeffModulus::BFVDefault(POLY_MODULUS_DEGREE));
+        parms.set_plain_modulus(PLAIN_MODULUS);
         
         context = new seal::SEALContext(parms);
         evaluator = new Evaluator(*context);
@@ -653,12 +654,14 @@ static doca_error_t configure_pipe_of_ingress_port(struct app_005_cfg &cfg)
     result = doca_flow_pipe_cfg_set_name(pipe_cfg, "INGRESS_PIPE");
     CHECK_DERR(result);
 
+    // Questa pipe è root pipe ==> i pacchetti in ingresso alla porta 0 passano prima qua
     result = doca_flow_pipe_cfg_set_is_root(pipe_cfg, true);
     CHECK_DERR(result);
 
     result = doca_flow_pipe_cfg_set_domain(pipe_cfg, DOCA_FLOW_PIPE_DOMAIN_DEFAULT);
     CHECK_DERR(result);
 
+    // Non faccio alcuna action
     result = doca_flow_pipe_cfg_set_actions(pipe_cfg, actions_arr, nullptr, nullptr, num_actions);
     CHECK_DERR(result);
 
@@ -668,11 +671,16 @@ static doca_error_t configure_pipe_of_ingress_port(struct app_005_cfg &cfg)
     result = doca_flow_pipe_cfg_set_type(pipe_cfg, DOCA_FLOW_PIPE_BASIC);
     CHECK_DERR(result);
 
+    // Usa forwarding RSS ==> i pacchetti vanno alla CPU
     fwd.type = DOCA_FLOW_FWD_RSS;
     fwd.rss_queues = cfg.dpdk.rxtx_queues.data();
     fwd.num_of_queues = cfg.dpdk.nb_rxtx_queues;
+    // L'hash viene calcolato su questi campi...
     fwd.rss_outer_flags = DOCA_FLOW_RSS_IPV4 | DOCA_FLOW_RSS_IPV6 | DOCA_FLOW_RSS_UDP | DOCA_FLOW_RSS_TCP;
+    // I pacchetti che non fanno match vengono droppata (qua il match è sempre true)
     fwd_miss.type = DOCA_FLOW_FWD_DROP;
+
+    // Creazione pipe
     result = doca_flow_pipe_create(pipe_cfg, &fwd, &fwd_miss, &cfg.doca.ingress.root_pipe);
     CHECK_DERR(result);
 
@@ -926,7 +934,7 @@ inline static doca_error_t poll_interface_and_fwd(
     uint16_t nb_rx = rte_eth_rx_burst(in_port, in_queue, mbufs, burst_size);
 
     if(nb_rx > 0){
-        printf("[Thread %d] Ricevuti %u pacchetti\n", rte_lcore_index(rte_lcore_id()), nb_rx);
+        printf("[THREAD%d] Ricevuti %u pacchetti\n", rte_lcore_index(rte_lcore_id()), nb_rx);
     }
 
     for (uint16_t i = 0; i < nb_rx; i++) {
@@ -953,16 +961,16 @@ inline static doca_error_t poll_interface_and_fwd(
         //lunghezza dei singoli frammenti
         uint16_t udp_payload_len = rte_be_to_cpu_16(udp->dgram_len) - sizeof(struct rte_udp_hdr); 
 
-        //Non assemblare pacchetti non destinati al receiver
-        if(udp->dst_port < rte_cpu_to_be_16(9000) || udp->dst_port > rte_cpu_to_be_16(9000 + 4)){
-            printf("Pacchetto con porta %u non assemblato\n", (unsigned)rte_be_to_cpu_16(udp->dst_port));
+        //Non assemblare pacchetti non destinati al receiver (usa costanti da config.h)
+        if(udp->dst_port < rte_cpu_to_be_16(BASE_PORT) || udp->dst_port > rte_cpu_to_be_16(BASE_PORT + N_PORTS - 1)){
+            printf("[THREAD%d] Pacchetto con porta %u non assemblato\n", rte_lcore_index(rte_lcore_id()), (unsigned)rte_be_to_cpu_16(udp->dst_port));
             continue;
         }
 
         // Devo fare cast da uint8_t a const char per come è scritto packet_assembler (in cui tengo char per semplicità)
         auto result = assembler.process_packet((const char *)udp_payload, udp_payload_len);
         if(result.complete){
-            printf("[Thread %d] Pacchetto %d assemblato\n", rte_lcore_index(rte_lcore_id()), result.message_id);
+            printf("[THREAD%d] Pacchetto %d assemblato\n", rte_lcore_index(rte_lcore_id()), result.message_id);
             
             // Si ricrea oggetto SEAL partendo dal buffer
             std::stringstream ss(std::string(result.data.begin(), result.data.end()));
@@ -971,19 +979,19 @@ inline static doca_error_t poll_interface_and_fwd(
             
             // Somma omomorfica con una costante
             he_ctx->add_plain_number(ct, 13291);
-            printf("Somma omomorfica +13291 completata\n");
+            printf("[THREAD%d] Somma omomorfica +13291 completata\n", rte_lcore_index(rte_lcore_id()));
             
             // Si prepara il buffer da inviare
             std::stringstream result_ss;
             ct.save(result_ss);
             std::string ciphertext_str = result_ss.str();
-            printf("Ciphertext risultante: %zu bytes\n", ciphertext_str.size());
+            printf("[THREAD%d] Ciphertext risultante: %zu bytes\n", rte_lcore_index(rte_lcore_id()), ciphertext_str.size());
             
             // Frammentazione e invio indietro
             // Non uso la classe Message in quanto essa è fatta per l'invio con uso di socket
             uint32_t total_size = ciphertext_str.size();
             uint16_t total_chunks = (total_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
-            printf("Frammentazione in %u chunks\n", total_chunks);
+            printf("[THREAD%d] Frammentazione in %u chunks\n", rte_lcore_index(rte_lcore_id()), total_chunks);
             
             // Configuro gli indirizzi che verranno usati per inviare i singoli frammenti
 
@@ -999,7 +1007,7 @@ inline static doca_error_t poll_interface_and_fwd(
             uint16_t src_port = udp->src_port;
             /*Potrei lasciarla invariata, ma ho visto che se lo faccio il receiver
             intercetta i messaggi inviati dalla DPU1 prima che la DPU2 li elabori*/
-            uint16_t dst_port = rte_cpu_to_be_16(8999);
+            uint16_t dst_port = rte_cpu_to_be_16(RX_PORT);
             
             // Invia ogni chunk
             for (uint16_t chunk_idx = 0; chunk_idx < total_chunks; chunk_idx++) {
@@ -1010,7 +1018,7 @@ inline static doca_error_t poll_interface_and_fwd(
                 // Alloca mbuf per il pacchetto di risposta
                 struct rte_mbuf *response_mbuf = rte_pktmbuf_alloc(mbuf->pool);
                 if (!response_mbuf) {
-                    printf("Errore allocazione mbuf per chunk %u\n", chunk_idx);
+                    printf("[THREAD%d] Errore allocazione mbuf per chunk %u\n", rte_lcore_index(rte_lcore_id()), chunk_idx);
                     continue;
                 }
                 
@@ -1077,15 +1085,15 @@ inline static doca_error_t poll_interface_and_fwd(
                 // Il pacchetto arriva su P0, viene elaborato, e esce su P1 verso DPU1:P1
                 uint16_t sent = rte_eth_tx_burst(out_port, out_queue, &response_mbuf, 1);
                 if (sent == 0) {
-                    printf("Errore invio chunk %u\n", chunk_idx);
+                    printf("[THREAD%d] Errore invio chunk %u\n", rte_lcore_index(rte_lcore_id()), chunk_idx);
                     rte_pktmbuf_free(response_mbuf);
                 } else {
-                    printf("Chunk %u/%u inviato (payload di %u bytes)\n", 
-                           chunk_idx + 1, total_chunks, current_chunk_size);
+                    printf("[THREAD%d] Chunk %u/%u inviato (payload di %u bytes)\n", 
+                           rte_lcore_index(rte_lcore_id()), chunk_idx + 1, total_chunks, current_chunk_size);
                 }
             }
             
-            printf("Tutti i %u chunks inviati\n", total_chunks);
+            printf("[THREAD%d] Tutti i %u chunks inviati\n", rte_lcore_index(rte_lcore_id()), total_chunks);
         }
         
         //rte_eth_tx_burst dovrebbe occuparsi di liberare la memoria allocata per il mbuf

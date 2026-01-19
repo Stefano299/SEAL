@@ -3,17 +3,18 @@
 #include <iostream>
 #include <fstream>
 #include "seal/seal.h"
+#include "config.h"
 
 using namespace seal;
 using namespace std;
 
 
 int main() {
-    // Stessi parametri usati in sender e receiver
+    // Parametri da config.h
     EncryptionParameters parms(scheme_type::bfv);
-    parms.set_poly_modulus_degree(2048);
-    parms.set_coeff_modulus(CoeffModulus::BFVDefault(2048));
-    parms.set_plain_modulus(65537);
+    parms.set_poly_modulus_degree(POLY_MODULUS_DEGREE);
+    parms.set_coeff_modulus(CoeffModulus::BFVDefault(POLY_MODULUS_DEGREE));
+    parms.set_plain_modulus(PLAIN_MODULUS);
     
     SEALContext context(parms);
     

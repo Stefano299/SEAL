@@ -11,17 +11,16 @@
 #include <arpa/inet.h>
 #include "seal/seal.h"
 #include "message.h"
+#include "config.h"
 
 using namespace seal;
 
-const uint16_t N_PORTS = 4;  // Così nella DPU2 i messaggi vengono distribuiti su code diverse
 /*
 Ho potuto constatare che se uso un'unica porta i frammenti inviati vanno sempre allo 
 stesso thread. Infatti, nella DPU2 i pacchetti vengono distribuiti alle code/thread in base ad 
 un hash che viene calcolato anche considerando la porta di destinazione. Mandando i frammenti
 su porte diverse, è come se ad ogni thread venisse associata una diversa porta.
 */
-const uint16_t BASE_PORT = 9000;
 
 int main(int argc, char* argv[]) {
     if (argc < 4) {
@@ -38,11 +37,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Setup SEAL
+    // Setup SEAL con parametri da config.h
     EncryptionParameters parms(scheme_type::bfv);
-    parms.set_poly_modulus_degree(2048);
-    parms.set_coeff_modulus(CoeffModulus::BFVDefault(2048));
-    parms.set_plain_modulus(65537);
+    parms.set_poly_modulus_degree(POLY_MODULUS_DEGREE);
+    parms.set_coeff_modulus(CoeffModulus::BFVDefault(POLY_MODULUS_DEGREE));
+    parms.set_plain_modulus(PLAIN_MODULUS);
     SEALContext context(parms);
 
     // Carica public key da file
