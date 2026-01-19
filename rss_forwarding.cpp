@@ -933,9 +933,9 @@ inline static doca_error_t poll_interface_and_fwd(
 {
     uint16_t nb_rx = rte_eth_rx_burst(in_port, in_queue, mbufs, burst_size);
 
-    if(nb_rx > 0){
+    /*if(nb_rx > 0){
         printf("[THREAD%d] Ricevuti %u pacchetti\n", rte_lcore_index(rte_lcore_id()), nb_rx);
-    }
+    }*/
 
     for (uint16_t i = 0; i < nb_rx; i++) {
         struct rte_mbuf *mbuf = mbufs[i];
@@ -963,15 +963,14 @@ inline static doca_error_t poll_interface_and_fwd(
 
         //Non assemblare pacchetti non destinati al receiver (usa costanti da config.h)
         if(udp->dst_port < rte_cpu_to_be_16(BASE_PORT) || udp->dst_port > rte_cpu_to_be_16(BASE_PORT + N_PORTS - 1)){
-            printf("[THREAD%d] Pacchetto con porta %u non assemblato\n", rte_lcore_index(rte_lcore_id()), (unsigned)rte_be_to_cpu_16(udp->dst_port));
+            //printf("[THREAD%d] Pacchetto con porta %u non assemblato\n", rte_lcore_index(rte_lcore_id()), (unsigned)rte_be_to_cpu_16(udp->dst_port));
             continue;
         }
 
         // Devo fare cast da uint8_t a const char per come è scritto packet_assembler (in cui tengo char per semplicità)
         auto result = assembler.process_packet((const char *)udp_payload, udp_payload_len);
         if(result.complete){
-            printf("[THREAD%d] Pacchetto %d assemblato\n", rte_lcore_index(rte_lcore_id()), result.message_id);
-            
+            printf("[THREAD%d] Pacchetto %d assemblato sulla porta %u\n", rte_lcore_index(rte_lcore_id()), result.message_id, rte_be_to_cpu_16(udp->dst_port));
             // Si ricrea oggetto SEAL partendo dal buffer
             std::stringstream ss(std::string(result.data.begin(), result.data.end()));
             Ciphertext ct;
@@ -1087,9 +1086,6 @@ inline static doca_error_t poll_interface_and_fwd(
                 if (sent == 0) {
                     printf("[THREAD%d] Errore invio chunk %u\n", rte_lcore_index(rte_lcore_id()), chunk_idx);
                     rte_pktmbuf_free(response_mbuf);
-                } else {
-                    printf("[THREAD%d] Chunk %u/%u inviato (payload di %u bytes)\n", 
-                           rte_lcore_index(rte_lcore_id()), chunk_idx + 1, total_chunks, current_chunk_size);
                 }
             }
             

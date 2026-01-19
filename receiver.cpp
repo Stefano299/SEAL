@@ -55,10 +55,16 @@ int main() {
         return 1;
     }
     
+    // Aumenta buffer di ricezione 
+    int recv_buf_size = 8 * 1024 * 1024;  // 8 MB
+    if (setsockopt(sock, SOL_SOCKET, SO_RCVBUF, &recv_buf_size, sizeof(recv_buf_size)) < 0) {
+        std::cerr << "Warning: impossibile aumentare buffer ricezione" << std::endl;
+    }
+    
     std::cout << "In ascolto su porta " << RX_PORT << std::endl;
     
     std::vector<char> buffer(sizeof(TelemetryHeader) + CHUNK_SIZE);
-    
+
     while (true) {
         sockaddr_in sender;
         socklen_t sender_len = sizeof(sender);
@@ -67,8 +73,8 @@ int main() {
                              (sockaddr*)&sender, &sender_len);
         
         if (n > 0) {
-            std::cout << "Ricevuti " << n << " bytes" << std::endl;
-            
+            // std::cout << "Ricevuti " << n << " bytes" << std::endl; // Commentato per prestazioni
+
             auto result = assembler.process_packet(buffer.data(), n);
             
             if (result.complete) {
