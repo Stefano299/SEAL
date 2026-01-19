@@ -978,19 +978,19 @@ inline static doca_error_t poll_interface_and_fwd(
             
             // Somma omomorfica con una costante
             he_ctx->add_plain_number(ct, 13291);
-            printf("[THREAD%d] Somma omomorfica +13291 completata\n", rte_lcore_index(rte_lcore_id()));
+            //printf("[THREAD%d] Somma omomorfica +13291 completata\n", rte_lcore_index(rte_lcore_id()));
             
             // Si prepara il buffer da inviare
             std::stringstream result_ss;
             ct.save(result_ss);
             std::string ciphertext_str = result_ss.str();
-            printf("[THREAD%d] Ciphertext risultante: %zu bytes\n", rte_lcore_index(rte_lcore_id()), ciphertext_str.size());
+            //printf("[THREAD%d] Ciphertext risultante: %zu bytes\n", rte_lcore_index(rte_lcore_id()), ciphertext_str.size());
             
             // Frammentazione e invio indietro
             // Non uso la classe Message in quanto essa è fatta per l'invio con uso di socket
             uint32_t total_size = ciphertext_str.size();
             uint16_t total_chunks = (total_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
-            printf("[THREAD%d] Frammentazione in %u chunks\n", rte_lcore_index(rte_lcore_id()), total_chunks);
+            //printf("[THREAD%d] Frammentazione in %u chunks\n", rte_lcore_index(rte_lcore_id()), total_chunks);
             
             // Configuro gli indirizzi che verranno usati per inviare i singoli frammenti
 
@@ -1089,7 +1089,7 @@ inline static doca_error_t poll_interface_and_fwd(
                 }
             }
             
-            printf("[THREAD%d] Tutti i %u chunks inviati\n", rte_lcore_index(rte_lcore_id()), total_chunks);
+            //printf("[THREAD%d] Tutti i %u chunks inviati\n", rte_lcore_index(rte_lcore_id()), total_chunks);
         }
         
         //rte_eth_tx_burst dovrebbe occuparsi di liberare la memoria allocata per il mbuf
