@@ -16,6 +16,7 @@
 // C/C++ headers
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <functional>
 #include <iomanip>
@@ -867,6 +868,12 @@ static doca_error_t cleanup_doca(struct app_005_cfg &cfg)
 // user code will loop untill exit will be requested
 static std::atomic_bool exit_request(false);
 
+// Contatori atomici per benchmark HE
+static std::atomic<long> total_load_us(0);
+static std::atomic<long> total_add_us(0);
+static std::atomic<long> total_save_us(0);
+static std::atomic<long> he_op_count(0);
+
 // simple signal handling, set exit flag
 static void handle_exit_signal(int sig)
 {
@@ -971,19 +978,39 @@ inline static doca_error_t poll_interface_and_fwd(
         auto result = assembler.process_packet((const char *)udp_payload, udp_payload_len);
         if(result.complete){
             printf("[THREAD%d] Pacchetto %d assemblato sulla porta %u\n", rte_lcore_index(rte_lcore_id()), result.message_id, rte_be_to_cpu_16(udp->dst_port));
+            
+            auto start = std::chrono::high_resolution_clock::now(); // Timer iniziale per benchmark
+            
             // Si ricrea oggetto SEAL partendo dal buffer
             std::stringstream ss(std::string(result.data.begin(), result.data.end()));
             Ciphertext ct;
             ct.load(*he_ctx->context, ss);
+            auto after_load = std::chrono::high_resolution_clock::now();
+
+            // std::chrono::duration_cast<std::chrono::microseconds> restituisce un oggetto di tipo std::chrono::microseconds
+            // Facendo .count() ne prendo i microsecondi
+            auto load_us = std::chrono::duration_cast<std::chrono::microseconds>(after_load - start).count();
             
             // Somma omomorfica con una costante
             he_ctx->add_plain_number(ct, 13291);
-            //printf("[THREAD%d] Somma omomorfica +13291 completata\n", rte_lcore_index(rte_lcore_id()));
+            auto after_add = std::chrono::high_resolution_clock::now();
+            auto add_us = std::chrono::duration_cast<std::chrono::microseconds>(after_add - after_load).count();
             
             // Si prepara il buffer da inviare
             std::stringstream result_ss;
             ct.save(result_ss);
             std::string ciphertext_str = result_ss.str();
+
+            auto after_save = std::chrono::high_resolution_clock::now();
+            auto save_us = std::chrono::duration_cast<std::chrono::microseconds>(after_save - after_add).count();
+            
+            //printf("HE load:%ld add:%ld save:%ld \n", load_us, add_us, save_us);
+            
+            // Il metodo fetch_add() fa semplicemente la somma
+            total_load_us.fetch_add(load_us);
+            total_add_us.fetch_add(add_us);
+            total_save_us.fetch_add(save_us);
+            he_op_count.fetch_add(1);
             //printf("[THREAD%d] Ciphertext risultante: %zu bytes\n", rte_lcore_index(rte_lcore_id()), ciphertext_str.size());
             
             // Frammentazione e invio indietro
@@ -1214,6 +1241,16 @@ int main(int argc, char *argv[])
     rte_eal_mp_wait_lcore();
 
     std::cout << "Shutdown..." << std::endl;
+    
+    // Stampa medie benchmark 
+    long count = he_op_count.load();
+    if (count > 0) {
+        std::cout << "Operazioni totali: " << count << std::endl;
+        std::cout << "Media load:  " << (total_load_us.load() / count) << " µs" << std::endl;
+        std::cout << "Media add:   " << (total_add_us.load() / count) << " µs" << std::endl;
+        std::cout << "Media save:  " << (total_save_us.load() / count) << " µs" << std::endl;
+        std::cout << "Media totale: " << ((total_load_us.load() + total_add_us.load() + total_save_us.load()) / count) << " µs" << std::endl;
+    }
 
     result = cleanup_doca(cfg);
     CHECK_DERR(result);
