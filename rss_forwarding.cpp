@@ -996,7 +996,9 @@ inline static doca_error_t poll_interface_and_fwd(
             auto start = std::chrono::high_resolution_clock::now(); // Timer iniziale per benchmark
             
             // Si ricrea oggetto SEAL partendo dal buffer
-            std::stringstream ss(std::string(result.data.begin(), result.data.end()));
+            // Uso write() invece di costruire una string intermedia per evitare una copia
+            std::stringstream ss;
+            ss.write(result.data.data(), result.data.size());
             Ciphertext ct;
             ct.load(*he_ctx->context, ss);
             auto after_load = std::chrono::high_resolution_clock::now();
@@ -1013,7 +1015,7 @@ inline static doca_error_t poll_interface_and_fwd(
             // Si prepara il buffer da inviare
             std::stringstream result_ss;
             ct.save(result_ss);
-            std::string ciphertext_str = result_ss.str();
+            std::string ciphertext_str = result_ss.str();  
 
             auto after_save = std::chrono::high_resolution_clock::now();
             auto save_us = std::chrono::duration_cast<std::chrono::microseconds>(after_save - after_add).count();
@@ -1049,25 +1051,28 @@ inline static doca_error_t poll_interface_and_fwd(
             intercetta i messaggi inviati dalla DPU1 prima che la DPU2 li elabori*/
             uint16_t dst_port = rte_cpu_to_be_16(RX_PORT);
             
+            // Alloca tutti gli mbuf in una volta (bulk alloc), per evitare di allocare mbuf per ogni chunk ad ogni iterazione
+            struct rte_mbuf *response_mbufs[total_chunks];
+            if (rte_pktmbuf_alloc_bulk(mbuf->pool, response_mbufs, total_chunks) != 0) {
+                printf("[THREAD%d] Errore bulk alloc per i mbufs\n", rte_lcore_index(rte_lcore_id()));
+                continue;
+            }
+            
+            // Preparo il telemetry header (si trova in message.h)
+            TelemetryHeader tel_hdr;
+            tel_hdr.message_id = result.message_id;
+            tel_hdr.total_chunks = total_chunks;
+            tel_hdr.ciphertext_total_size = total_size;
+            
             // Invia ogni chunk
             for (uint16_t chunk_idx = 0; chunk_idx < total_chunks; chunk_idx++) {
                 // Calcola dimensione del chunk corrente
                 uint32_t offset = chunk_idx * CHUNK_SIZE;
                 uint16_t current_chunk_size = std::min((uint32_t)CHUNK_SIZE, total_size - offset);
                 
-                // Alloca mbuf per il pacchetto di risposta
-                struct rte_mbuf *response_mbuf = rte_pktmbuf_alloc(mbuf->pool);
-                if (!response_mbuf) {
-                    printf("[THREAD%d] Errore allocazione mbuf per chunk %u\n", rte_lcore_index(rte_lcore_id()), chunk_idx);
-                    continue;
-                }
+                struct rte_mbuf *response_mbuf = response_mbufs[chunk_idx];
                 
-                // Preparo il telemetry header (si trova in message.h)
-                TelemetryHeader tel_hdr;
-                tel_hdr.message_id = result.message_id;
-                tel_hdr.total_chunks = total_chunks;
                 tel_hdr.chunk_index = chunk_idx;
-                tel_hdr.ciphertext_total_size = total_size;
                 tel_hdr.chunk_size = current_chunk_size;
                 
                 // Calcolo dimensioni
