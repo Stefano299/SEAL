@@ -4,6 +4,8 @@
 #include "packet_assembler.h"
 
 PacketAssembler::AssemblyResult
+// Ogni chiamata non alloca nuova memoria: assign non alloca nuova memoria se ne ha già abbastanza
+// dopo che è stato fatto il clear nel metodo reset() (che non dealloca)
 PacketAssembler::process_packet(const char *packet, size_t packet_size) {
   AssemblyResult result{false, 0, {}};
 

@@ -933,12 +933,22 @@ thread_local PacketAssembler assembler;
 thread_local HEContext* he_ctx = nullptr;  // Inizializzato nel main, per evitare errore all'avvio
 // poll for input packets from the in_* direction
 // and send them to the out_* direction
+
+// Funzione che viene chiamata continuamente dai vari thread. Ogni iterazione non viene usata
+// sempre più memoria, ma viene riutilizzata la memoria già allocata (NOTA rte_eth_rx_burst non alloca nuova memoria).
+// La RAM usata aumenta solo all'arrivo del primo messaggio (~2MB per thread), e viene poi riusata la stessa
+// all'arrivo dei messaggi successivi.
+// Il programma usa circa 135MB di RAM (diventano ~137MB dopo l'arrivo del primo messaggio).
 inline static doca_error_t poll_interface_and_fwd(
     uint16_t in_port, uint16_t in_queue,
     uint16_t out_port, uint16_t out_queue,
     uint32_t burst_size, struct rte_mbuf ** const &mbufs
 )
 {
+    // Per ogni pacchetto disponibile (fino a BURST_SIZE) nella RX queue (in_queue), prende
+    // un mbuf nel mempool e ne copia il puntatore in mbufs[i]. Gli mbuf sono allocati nel mempool
+    // all'avvio del programma da rte_pktmbuf_pool_create. Ne vengono allocati app_005_cfg::dpdk::mbuf_pool_size (16k),
+    // ognuno di circa 2KB (1 << 11 in app_005_cfg::dpdk::mbuf_pool_pkt_buf_size).
     uint16_t nb_rx = rte_eth_rx_burst(in_port, in_queue, mbufs, burst_size);
 
     /*if(nb_rx > 0){
@@ -1171,6 +1181,7 @@ static int my_dpdk_worker(void *my_dpdk_worker_arg)
     while (!exit_request.load())
     {
         /* from ingress to egress */
+        // Chiamata continuamente anche quando non arriva niente ==> consumo CPU massimo
         result = poll_interface_and_fwd(
             thread_args.ingress.port_id, thread_args.ingress.queue_id,
             thread_args.egress.port_id, thread_args.egress.queue_id,
