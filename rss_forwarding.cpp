@@ -145,8 +145,9 @@ struct app_005_cfg
         int nb_rxtx_queues = 0;
         std::vector<uint16_t> rxtx_queues;
 
-        static constexpr uint16_t nb_ring_rx_size = 128;
-        static constexpr uint16_t nb_ring_tx_size = 128;
+        // Usa le costanti da config.h
+        static constexpr uint16_t nb_ring_rx_size = RX_QUEUE_SIZE;
+        static constexpr uint16_t nb_ring_tx_size = TX_QUEUE_SIZE;
 
         // pointer to buffer pool : must be deallocated
         // on application termination
@@ -978,7 +979,10 @@ inline static doca_error_t poll_interface_and_fwd(
         auto result = assembler.process_packet((const char *)udp_payload, udp_payload_len);
         if(result.complete){
             printf("[THREAD%d] Pacchetto %d assemblato sulla porta %u\n", rte_lcore_index(rte_lcore_id()), result.message_id, rte_be_to_cpu_16(udp->dst_port));
-            
+
+            // Stampa il numero di pacchetti nella coda RX, per capire se raggiunge effettivamente il limite
+            uint32_t queue_count = rte_eth_rx_queue_count(in_port, in_queue);
+            printf("[THREAD%d] Numero di pacchetti nella RX queue: %u\n", rte_lcore_index(rte_lcore_id()), queue_count);
             auto start = std::chrono::high_resolution_clock::now(); // Timer iniziale per benchmark
             
             // Si ricrea oggetto SEAL partendo dal buffer
@@ -1135,8 +1139,7 @@ inline static doca_error_t poll_interface_and_fwd(
 
 static int my_dpdk_worker(void *my_dpdk_worker_arg)
 {
-    constexpr uint32_t burst_size = 32;
-    struct rte_mbuf *mbufs[burst_size] = {};
+    struct rte_mbuf *mbufs[BURST_SIZE] = {};
     doca_error_t result;
 
     if (!my_dpdk_worker_arg)
@@ -1171,14 +1174,14 @@ static int my_dpdk_worker(void *my_dpdk_worker_arg)
         result = poll_interface_and_fwd(
             thread_args.ingress.port_id, thread_args.ingress.queue_id,
             thread_args.egress.port_id, thread_args.egress.queue_id,
-            burst_size, mbufs
+            BURST_SIZE, mbufs
         );
         CHECK_DERR(result);
         /* from egress to ingress */
         result = poll_interface_and_fwd(
             thread_args.egress.port_id, thread_args.egress.queue_id,
             thread_args.ingress.port_id, thread_args.ingress.queue_id,
-            burst_size, mbufs
+            BURST_SIZE, mbufs
         );
         CHECK_DERR(result);
     }
