@@ -81,6 +81,10 @@ public:
     Evaluator* evaluator;
     BatchEncoder* encoder;
     
+    // Buffer pre-allocati per evitare allocazioni ripetute in add_plain_number
+    std::vector<uint64_t> values_buffer;
+    Plaintext ptx_buffer;
+    
     HEContext() {
         // Inizializzazione di SEAL con parametri da config.h
         EncryptionParameters parms(scheme_type::bfv);
@@ -91,6 +95,8 @@ public:
         context = new seal::SEALContext(parms);
         evaluator = new Evaluator(*context);
         encoder = new BatchEncoder(*context);
+        
+        values_buffer.resize(encoder->slot_count());
     }
     
     ~HEContext() {
@@ -101,10 +107,9 @@ public:
     
     // Somma un numero in chiaro al ciphertext
     void add_plain_number(Ciphertext& ct, uint64_t number) {
-        std::vector<uint64_t> values(encoder->slot_count(), number);
-        Plaintext ptx;
-        encoder->encode(values, ptx);
-        evaluator->add_plain_inplace(ct, ptx);
+        std::fill(values_buffer.begin(), values_buffer.end(), number);
+        encoder->encode(values_buffer, ptx_buffer);
+        evaluator->add_plain_inplace(ct, ptx_buffer);
     }
 };
 
@@ -1012,9 +1017,9 @@ inline static doca_error_t poll_interface_and_fwd(
             auto after_add = std::chrono::high_resolution_clock::now();
             auto add_us = std::chrono::duration_cast<std::chrono::microseconds>(after_add - after_load).count();
             
-            // Si prepara il buffer da inviare
+            // Si prepara il buffer da inviare (senza compressione per risparmiare CPU, pesa solo 2 KB in più)
             std::stringstream result_ss;
-            ct.save(result_ss);
+            ct.save(result_ss, seal::compr_mode_type::none);
             std::string ciphertext_str = result_ss.str();  
 
             auto after_save = std::chrono::high_resolution_clock::now();
@@ -1027,7 +1032,7 @@ inline static doca_error_t poll_interface_and_fwd(
             total_add_us.fetch_add(add_us);
             total_save_us.fetch_add(save_us);
             he_op_count.fetch_add(1);
-            //printf("[THREAD%d] Ciphertext risultante: %zu bytes\n", rte_lcore_index(rte_lcore_id()), ciphertext_str.size());
+            printf("[THREAD%d] Ciphertext risultante: %zu bytes\n", rte_lcore_index(rte_lcore_id()), ciphertext_str.size());
             
             // Frammentazione e invio indietro
             // Non uso la classe Message in quanto essa è fatta per l'invio con uso di socket

@@ -65,9 +65,9 @@ int main(int argc, char* argv[]) {
     Ciphertext ctx;
     encryptor.encrypt(ptx, ctx);
 
-    // Prepara buffer
+    // Prepara buffer (senza compressione per velocizzare load sulla DPU)
     std::stringstream ss;
-    ctx.save(ss);
+    ctx.save(ss, seal::compr_mode_type::none);
     std::string ciphertext_str = ss.str();
     std::cout << "Ciphertext: " << ciphertext_str.size() << " bytes" << std::endl;
 
