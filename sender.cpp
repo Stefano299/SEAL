@@ -8,7 +8,10 @@
 #include <cstring>
 #include <sys/socket.h>
 #include <unistd.h>
+
 #include <arpa/inet.h>
+#include <chrono>
+#include <thread>
 #include "seal/seal.h"
 #include "message.h"
 #include "config.h"
@@ -80,7 +83,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Prepara N_PORTS destinazioni diverse
+    // Prepara invio su N_PORTS porte diverse
     std::vector<sockaddr_in> destinations(N_PORTS);
     for (uint16_t p = 0; p < N_PORTS; p++) {
         memset(&destinations[p], 0, sizeof(sockaddr_in));
@@ -91,25 +94,65 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Invio a " << dest_ip << " su porte " << BASE_PORT << "-" << (BASE_PORT + N_PORTS - 1) << std::endl;
 
-    // Usa un unico message in quanto il messaggio inviato è sempre lo stesso...
-    Message msg(ciphertext_str, 0);
+    // Prealloco chunk da inviare, per rendere il send più veloce
+    uint32_t total_size = ciphertext_str.size();
+    uint32_t num_chunks = (total_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    
+    // Vettore di buffer pre allocati
+    std::vector<std::vector<char>> packet_buffers(num_chunks);
+    
+    for (uint32_t i = 0; i < num_chunks; i++) {
+        uint32_t offset = i * CHUNK_SIZE;
+        uint32_t remaining = total_size - offset;
+        uint32_t chunk_size = (remaining < CHUNK_SIZE) ? remaining : CHUNK_SIZE;
+        
+        // Preparo header
+        TelemetryHeader hdr;
+        hdr.message_id = 0; 
+        hdr.total_chunks = (uint16_t)num_chunks;
+        hdr.chunk_index = (uint16_t)i;
+        hdr.ciphertext_total_size = total_size;
+        hdr.chunk_size = (uint16_t)chunk_size;
+        
+        packet_buffers[i].resize(sizeof(TelemetryHeader) + chunk_size);
+        
+        // Copia header
+        memcpy(packet_buffers[i].data(), &hdr, sizeof(TelemetryHeader));
+        
+        // Copia il buffer del ciphertext
+        memcpy(packet_buffers[i].data() + sizeof(TelemetryHeader), 
+               ciphertext_str.data() + offset, chunk_size);
+    }
+
+    std::cout << "Pre allocati " << num_chunks << " pacchetti" << std::endl;
+
+    long interval_ns = 1000000000L / rate;
+    
+    // Timer usato per inviare ad un particolare rate
+    auto next_send_time = std::chrono::high_resolution_clock::now();
 
     // Distribuisce i messaggi su porte diverse (patendo da BASE_PORT)
     for (int i = 1; i <= n_msg; i++) {
         uint16_t port_idx = (i - 1) % N_PORTS;
-        uint16_t port = BASE_PORT + port_idx;
+        const sockaddr_in& dest = destinations[port_idx];
         
-        msg.setMessageId(i);
-        msg.useSocket(sock, destinations[port_idx]);  // Cambia destinazione
-        msg.send();
-        
-        if (i % 100 == 0) { // Stampa solo ogni 100 messaggi
-            std::cout << "Inviato msg " << i << "/" << n_msg << " su porta " << port << std::endl;
+        // Invia i chunk pre allocati
+        for (uint32_t c = 0; c < num_chunks; c++) {
+            // Aggiorna solo il message_id nel buffer già pronto
+            TelemetryHeader* hdr_ptr = (TelemetryHeader*)packet_buffers[c].data();
+            hdr_ptr->message_id = i;
+            
+            sendto(sock, packet_buffers[c].data(), packet_buffers[c].size(), 0,
+                    (const sockaddr*)&dest, sizeof(dest));
+        }
+
+        if (i % 1000 == 0) { 
+            std::cout << "Inviato msg " << i << "/" << n_msg << " su porta " << (BASE_PORT + port_idx) << std::endl;
         }
         
-        if (interval_us > 0) {
-            std::this_thread::sleep_for(std::chrono::microseconds(interval_us));
-        }
+        // Busy wait per inviare ad un certo rate
+        next_send_time += std::chrono::nanoseconds(interval_ns);
+        while (std::chrono::high_resolution_clock::now() < next_send_time) {}
     }
 
     close(sock);

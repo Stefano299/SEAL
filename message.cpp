@@ -9,6 +9,8 @@
 Message::Message(const std::string& data, uint32_t msg_id)
     : data(data), message_id(msg_id), sock(-1), socket_created(false) {
     memset(&dest_addr, 0, sizeof(dest_addr));
+    // Buffer pre allocato per l'invio
+    send_buffer.reserve(sizeof(TelemetryHeader) + CHUNK_SIZE);
 }
 
 // Distruttore
@@ -60,8 +62,11 @@ int32_t Message::send() {
     uint32_t total_size = getTotalSize();
     uint32_t num_chunks = getNumChunks();
     
-    // std::cout << "Invio messaggio ID " << message_id << ": " << total_size 
+    //std::cout << "Invio messaggio ID " << message_id << ": " << total_size 
     //           << " bytes in " << num_chunks << " chunk" << std::endl;
+    
+    // std::vector<char> pkt;
+    // pkt.reserve(sizeof(TelemetryHeader) + CHUNK_SIZE);
     
     for (uint32_t i = 0; i < num_chunks; i++) {
         // Calcolo offset e dimensione chunk
@@ -77,13 +82,14 @@ int32_t Message::send() {
         hdr.ciphertext_total_size = total_size;
         hdr.chunk_size = static_cast<uint16_t>(chunk_size);
         
-        // Creazione pacchetto header + dati
-        std::vector<char> pkt(sizeof(TelemetryHeader) + chunk_size);
-        memcpy(pkt.data(), &hdr, sizeof(TelemetryHeader));
-        memcpy(pkt.data() + sizeof(TelemetryHeader), data.data() + offset, chunk_size);
+        // Preparo buffer (ridimensiona solo se serve)
+        send_buffer.resize(sizeof(TelemetryHeader) + chunk_size);
+        
+        memcpy(send_buffer.data(), &hdr, sizeof(TelemetryHeader));
+        memcpy(send_buffer.data() + sizeof(TelemetryHeader), data.data() + offset, chunk_size);
         
         // Invio
-        int32_t sent = sendto(sock, pkt.data(), pkt.size(), 0,
+        int32_t sent = sendto(sock, send_buffer.data(), send_buffer.size(), 0,
                               (const sockaddr*)&dest_addr, sizeof(dest_addr));
         
         if (sent < 0) {

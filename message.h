@@ -26,6 +26,8 @@ private:
     int32_t sock;               // Socket UDP
     sockaddr_in dest_addr;      // Indirizzo destinazione
     bool socket_created;        // Flag per sapere se il socket è stato creato internamente
+    std::vector<char> send_buffer; // Buffer per l'invio
+
 
 public:
     Message(const std::string& data, uint32_t msg_id);
