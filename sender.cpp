@@ -71,8 +71,8 @@ int main(int argc, char* argv[]) {
     std::string ciphertext_str = ss.str();
     std::cout << "Ciphertext: " << ciphertext_str.size() << " bytes" << std::endl;
 
-    int interval_ms = 1000 / rate;
-
+    int interval_us = 1000000 / rate;
+    
     // Crea un socket UDP (usato su porte differenti)
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
@@ -103,8 +103,13 @@ int main(int argc, char* argv[]) {
         msg.useSocket(sock, destinations[port_idx]);  // Cambia destinazione
         msg.send();
         
-        std::cout << "Inviato msg " << i << "/" << n_msg << " su porta " << port << std::endl;
-        std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
+        if (i % 100 == 0) { // Stampa solo ogni 100 messaggi
+            std::cout << "Inviato msg " << i << "/" << n_msg << " su porta " << port << std::endl;
+        }
+        
+        if (interval_us > 0) {
+            std::this_thread::sleep_for(std::chrono::microseconds(interval_us));
+        }
     }
 
     close(sock);

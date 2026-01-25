@@ -60,8 +60,8 @@ int32_t Message::send() {
     uint32_t total_size = getTotalSize();
     uint32_t num_chunks = getNumChunks();
     
-    std::cout << "Invio messaggio ID " << message_id << ": " << total_size 
-              << " bytes in " << num_chunks << " chunk" << std::endl;
+    // std::cout << "Invio messaggio ID " << message_id << ": " << total_size 
+    //           << " bytes in " << num_chunks << " chunk" << std::endl;
     
     for (uint32_t i = 0; i < num_chunks; i++) {
         // Calcolo offset e dimensione chunk
@@ -91,12 +91,12 @@ int32_t Message::send() {
             return -1;
         }
         
-        std::cout << "  Chunk " << (i + 1) << "/" << num_chunks 
-                  << " inviato (" << sent << " bytes)" << std::endl;
+        // std::cout << "  Chunk " << (i + 1) << "/" << num_chunks 
+        //           << " inviato (" << sent << " bytes)" << std::endl;
 
     }
     
-    std::cout << "Invio del messaggio " << message_id << " completato" << std::endl;
+    // std::cout << "Invio del messaggio " << message_id << " completato" << std::endl;
     return static_cast<int32_t>(num_chunks);
 }
 

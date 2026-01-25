@@ -993,11 +993,11 @@ inline static doca_error_t poll_interface_and_fwd(
         // Devo fare cast da uint8_t a const char per come è scritto packet_assembler (in cui tengo char per semplicità)
         auto result = assembler.process_packet((const char *)udp_payload, udp_payload_len);
         if(result.complete){
-            printf("[THREAD%d] Pacchetto %d assemblato sulla porta %u\n", rte_lcore_index(rte_lcore_id()), result.message_id, rte_be_to_cpu_16(udp->dst_port));
+            //printf("[THREAD%d] Pacchetto %d assemblato sulla porta %u\n", rte_lcore_index(rte_lcore_id()), result.message_id, rte_be_to_cpu_16(udp->dst_port));
 
             // Stampa il numero di pacchetti nella coda RX, per capire se raggiunge effettivamente il limite
             uint32_t queue_count = rte_eth_rx_queue_count(in_port, in_queue);
-            printf("[THREAD%d] Numero di pacchetti nella RX queue: %u\n", rte_lcore_index(rte_lcore_id()), queue_count);
+            //printf("[THREAD%d] Numero di pacchetti nella RX queue: %u\n", rte_lcore_index(rte_lcore_id()), queue_count);
             auto start = std::chrono::high_resolution_clock::now(); // Timer iniziale per benchmark
             
             // Si ricrea oggetto SEAL partendo dal buffer
@@ -1032,7 +1032,7 @@ inline static doca_error_t poll_interface_and_fwd(
             total_add_us.fetch_add(add_us);
             total_save_us.fetch_add(save_us);
             he_op_count.fetch_add(1);
-            printf("[THREAD%d] Ciphertext risultante: %zu bytes\n", rte_lcore_index(rte_lcore_id()), ciphertext_str.size());
+            //printf("[THREAD%d] Ciphertext risultante: %zu bytes\n", rte_lcore_index(rte_lcore_id()), ciphertext_str.size());
             
             // Frammentazione e invio indietro
             // Non uso la classe Message in quanto essa è fatta per l'invio con uso di socket
