@@ -12,6 +12,7 @@
 #include <arpa/inet.h>
 #include <chrono>
 #include <thread>
+#include <mutex>
 #include "seal/seal.h"
 #include "message.h"
 #include "config.h"
@@ -24,6 +25,83 @@ stesso thread. Infatti, nella DPU2 i pacchetti vengono distribuiti alle code/thr
 un hash che viene calcolato anche considerando la porta di destinazione. Mandando i frammenti
 su porte diverse, è come se ad ogni thread venisse associata una diversa porta.
 */
+
+void send_worker(int thread_id, std::string dest_ip, int total_rate, int n_msg, std::string ciphertext_str) {
+    uint16_t port = BASE_PORT + thread_id;
+
+    // Crea un socket UDP
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+        std::cerr << "Errore creazione socket su thread " << thread_id << std::endl;
+        return;
+    }
+
+    sockaddr_in dest_addr;
+    memset(&dest_addr, 0, sizeof(sockaddr_in));
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(port);
+    inet_pton(AF_INET, dest_ip.c_str(), &dest_addr.sin_addr);
+
+    // Prealloco chunk da inviare
+    uint32_t total_size = ciphertext_str.size();
+    uint32_t num_chunks = (total_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    
+    // Vettore di buffer pre allocati
+    std::vector<std::vector<char>> packet_buffers(num_chunks);
+    
+    for (uint32_t i = 0; i < num_chunks; i++) {
+        uint32_t offset = i * CHUNK_SIZE;
+        uint32_t remaining = total_size - offset;
+        uint32_t chunk_size = (remaining < CHUNK_SIZE) ? remaining : CHUNK_SIZE;
+        
+        // Preparo header
+        TelemetryHeader hdr;
+        hdr.message_id = 0; 
+        hdr.total_chunks = (uint16_t)num_chunks;
+        hdr.chunk_index = (uint16_t)i;
+        hdr.ciphertext_total_size = total_size;
+        hdr.chunk_size = (uint16_t)chunk_size;
+        
+        packet_buffers[i].resize(sizeof(TelemetryHeader) + chunk_size);
+        
+        // Copia header
+        memcpy(packet_buffers[i].data(), &hdr, sizeof(TelemetryHeader));
+        
+        // Copia il buffer del ciphertext
+        memcpy(packet_buffers[i].data() + sizeof(TelemetryHeader), 
+               ciphertext_str.data() + offset, chunk_size);
+    }
+
+    // Calcolo intervallo per thread
+    long interval_ns = (1000000000L * N_PORTS) / total_rate;
+    
+    auto next_send_time = std::chrono::high_resolution_clock::now();
+
+    for (int i = 1 + thread_id; i <= n_msg; i += N_PORTS) {
+        
+        // Invia i chunk pre allocati
+        for (uint32_t c = 0; c < num_chunks; c++) {
+            // Aggiorna solo il message_id nel buffer già pronto
+            TelemetryHeader* hdr_ptr = (TelemetryHeader*)packet_buffers[c].data();
+            hdr_ptr->message_id = i;
+            
+            sendto(sock, packet_buffers[c].data(), packet_buffers[c].size(), 0,
+                    (const sockaddr*)&dest_addr, sizeof(dest_addr));
+        }
+
+        if (i % 1000 == 1 + thread_id || i % 1000 == 0) { 
+             if (i % 1000 == 0) {
+                 std::cout << "[Thread " << thread_id << "] Inviato msg " << i << "/" << n_msg << " su porta " << port << std::endl;
+             }
+        }
+        
+        // Busy wait per inviare ad un certo rate (con sleep non era abbastanza preciso)
+        next_send_time += std::chrono::nanoseconds(interval_ns);
+        while (std::chrono::high_resolution_clock::now() < next_send_time) {}
+    }
+
+    close(sock);
+}
 
 int main(int argc, char* argv[]) {
     if (argc < 4) {
@@ -68,94 +146,24 @@ int main(int argc, char* argv[]) {
     Ciphertext ctx;
     encryptor.encrypt(ptx, ctx);
 
-    // Prepara buffer (senza compressione per velocizzare load sulla DPU)
+    // Prepara buffer 
     std::stringstream ss;
     ctx.save(ss, seal::compr_mode_type::none);
     std::string ciphertext_str = ss.str();
     std::cout << "Ciphertext: " << ciphertext_str.size() << " bytes" << std::endl;
 
-    int interval_us = 1000000 / rate;
-    
-    // Crea un socket UDP (usato su porte differenti)
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-        std::cerr << "Errore creazione socket" << std::endl;
-        return 1;
+    std::cout << "Invio a " << dest_ip << " su porte " << BASE_PORT << "-" << (BASE_PORT + N_PORTS - 1) 
+              << " con " << N_PORTS << " thread." << std::endl;
+
+    std::vector<std::thread> threads;
+    for (int i = 0; i < N_PORTS; i++) {
+        threads.emplace_back(send_worker, i, dest_ip, rate, n_msg, ciphertext_str);
     }
 
-    // Prepara invio su N_PORTS porte diverse
-    std::vector<sockaddr_in> destinations(N_PORTS);
-    for (uint16_t p = 0; p < N_PORTS; p++) {
-        memset(&destinations[p], 0, sizeof(sockaddr_in));
-        destinations[p].sin_family = AF_INET;
-        destinations[p].sin_port = htons(BASE_PORT + p);
-        inet_pton(AF_INET, dest_ip.c_str(), &destinations[p].sin_addr);
+    for (auto& t : threads) {
+        t.join();
     }
 
-    std::cout << "Invio a " << dest_ip << " su porte " << BASE_PORT << "-" << (BASE_PORT + N_PORTS - 1) << std::endl;
-
-    // Prealloco chunk da inviare, per rendere il send più veloce
-    uint32_t total_size = ciphertext_str.size();
-    uint32_t num_chunks = (total_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
-    
-    // Vettore di buffer pre allocati
-    std::vector<std::vector<char>> packet_buffers(num_chunks);
-    
-    for (uint32_t i = 0; i < num_chunks; i++) {
-        uint32_t offset = i * CHUNK_SIZE;
-        uint32_t remaining = total_size - offset;
-        uint32_t chunk_size = (remaining < CHUNK_SIZE) ? remaining : CHUNK_SIZE;
-        
-        // Preparo header
-        TelemetryHeader hdr;
-        hdr.message_id = 0; 
-        hdr.total_chunks = (uint16_t)num_chunks;
-        hdr.chunk_index = (uint16_t)i;
-        hdr.ciphertext_total_size = total_size;
-        hdr.chunk_size = (uint16_t)chunk_size;
-        
-        packet_buffers[i].resize(sizeof(TelemetryHeader) + chunk_size);
-        
-        // Copia header
-        memcpy(packet_buffers[i].data(), &hdr, sizeof(TelemetryHeader));
-        
-        // Copia il buffer del ciphertext
-        memcpy(packet_buffers[i].data() + sizeof(TelemetryHeader), 
-               ciphertext_str.data() + offset, chunk_size);
-    }
-
-    std::cout << "Pre allocati " << num_chunks << " pacchetti" << std::endl;
-
-    long interval_ns = 1000000000L / rate;
-    
-    // Timer usato per inviare ad un particolare rate
-    auto next_send_time = std::chrono::high_resolution_clock::now();
-
-    // Distribuisce i messaggi su porte diverse (patendo da BASE_PORT)
-    for (int i = 1; i <= n_msg; i++) {
-        uint16_t port_idx = (i - 1) % N_PORTS;
-        const sockaddr_in& dest = destinations[port_idx];
-        
-        // Invia i chunk pre allocati
-        for (uint32_t c = 0; c < num_chunks; c++) {
-            // Aggiorna solo il message_id nel buffer già pronto
-            TelemetryHeader* hdr_ptr = (TelemetryHeader*)packet_buffers[c].data();
-            hdr_ptr->message_id = i;
-            
-            sendto(sock, packet_buffers[c].data(), packet_buffers[c].size(), 0,
-                    (const sockaddr*)&dest, sizeof(dest));
-        }
-
-        if (i % 1000 == 0) { 
-            std::cout << "Inviato msg " << i << "/" << n_msg << " su porta " << (BASE_PORT + port_idx) << std::endl;
-        }
-        
-        // Busy wait per inviare ad un certo rate
-        next_send_time += std::chrono::nanoseconds(interval_ns);
-        while (std::chrono::high_resolution_clock::now() < next_send_time) {}
-    }
-
-    close(sock);
     std::cout << "Fine invio di " << n_msg << " messaggi" << std::endl;
     return 0;
 }

@@ -15,8 +15,9 @@ PacketAssembler::process_packet(const char *packet, size_t packet_size) {
   TelemetryHeader hdr;
   memcpy(&hdr, packet, sizeof(TelemetryHeader));
 
-  // NOTA se messages[hdr.message_id] non esiste, viene creato automaticamente
-  MessageInfo& msg = messages[hdr.message_id];
+
+  auto it = messages.emplace(hdr.message_id, MessageInfo{}).first;
+  MessageInfo& msg = it->second;
   
   // In caso il messaggio non era ancora mai arrivato
   if (!msg.active) {

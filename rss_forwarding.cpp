@@ -1027,7 +1027,7 @@ inline static doca_error_t poll_interface_and_fwd(
             
             //printf("HE load:%ld add:%ld save:%ld \n", load_us, add_us, save_us);
             
-            if (result.message_id > 10000) {
+            if (result.message_id > 0) {
                 total_load_us.fetch_add(load_us);
                 total_add_us.fetch_add(add_us);
                 total_save_us.fetch_add(save_us);
