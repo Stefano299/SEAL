@@ -936,6 +936,7 @@ static struct worker_args get_worker_args(struct app_005_cfg &cfg)
 // Static senza multi-threading, thread_local con multi-threading (per evitare race condition)
 thread_local PacketAssembler assembler;
 thread_local HEContext* he_ctx = nullptr;  // Inizializzato nel main, per evitare errore all'avvio
+thread_local std::vector<seal::seal_byte> ciphertext_buffer;  // Buffer riutilizzabile per evitare allocazioni
 // poll for input packets from the in_* direction
 // and send them to the out_* direction
 
@@ -1000,12 +1001,12 @@ inline static doca_error_t poll_interface_and_fwd(
             //printf("[THREAD%d] Numero di pacchetti nella RX queue: %u\n", rte_lcore_index(rte_lcore_id()), queue_count);
             auto start = std::chrono::high_resolution_clock::now(); // Timer iniziale per benchmark
             
-            // Si ricrea oggetto SEAL partendo dal buffer
-            // Uso write() invece di costruire una string intermedia per evitare una copia
-            std::stringstream ss;
-            ss.write(result.data.data(), result.data.size());
+            // Si ricrea oggetto SEAL partendo dal buffer 
             Ciphertext ct;
-            ct.load(*he_ctx->context, ss);
+            // Faccio casting in quanto result.data.data è di tipo char
+            ct.load(*he_ctx->context, 
+                    reinterpret_cast<const seal::seal_byte*>(result.data.data()), 
+                    result.data.size());
             auto after_load = std::chrono::high_resolution_clock::now();
 
             // std::chrono::duration_cast<std::chrono::microseconds> restituisce un oggetto di tipo std::chrono::microseconds
@@ -1018,16 +1019,16 @@ inline static doca_error_t poll_interface_and_fwd(
             auto add_us = std::chrono::duration_cast<std::chrono::microseconds>(after_add - after_load).count();
             
             // Si prepara il buffer da inviare (senza compressione per risparmiare CPU, pesa solo 2 KB in più)
-            std::stringstream result_ss;
-            ct.save(result_ss, seal::compr_mode_type::none);
-            std::string ciphertext_str = result_ss.str();  
+            auto ct_size = ct.save_size(seal::compr_mode_type::none);
+            ciphertext_buffer.resize(ct_size);
+            ct.save(ciphertext_buffer.data(), ciphertext_buffer.size(), seal::compr_mode_type::none);  
 
             auto after_save = std::chrono::high_resolution_clock::now();
             auto save_us = std::chrono::duration_cast<std::chrono::microseconds>(after_save - after_add).count();
             
             //printf("HE load:%ld add:%ld save:%ld \n", load_us, add_us, save_us);
             
-            if (result.message_id > 0) {
+            if (result.message_id > LOWER_BOUND) {
                 total_load_us.fetch_add(load_us);
                 total_add_us.fetch_add(add_us);
                 total_save_us.fetch_add(save_us);
@@ -1037,7 +1038,7 @@ inline static doca_error_t poll_interface_and_fwd(
             
             // Frammentazione e invio indietro
             // Non uso la classe Message in quanto essa è fatta per l'invio con uso di socket
-            uint32_t total_size = ciphertext_str.size();
+            uint32_t total_size = ciphertext_buffer.size();
             uint16_t total_chunks = (total_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
             //printf("[THREAD%d] Frammentazione in %u chunks\n", rte_lcore_index(rte_lcore_id()), total_chunks);
             
@@ -1125,7 +1126,7 @@ inline static doca_error_t poll_interface_and_fwd(
                 uint8_t *payload = (uint8_t *)(udp_hdr + 1);
                 memcpy(payload, &tel_hdr, sizeof(TelemetryHeader));
                 memcpy(payload + sizeof(TelemetryHeader), 
-                       ciphertext_str.data() + offset, 
+                       ciphertext_buffer.data() + offset, 
                        current_chunk_size);
                 
                 // Imposta lunghezza pacchetto

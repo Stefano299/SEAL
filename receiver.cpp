@@ -81,10 +81,9 @@ int main() {
                 std::cout << "Messaggio " << result.message_id << " completo (" 
                      << result.data.size() << " bytes)" << std::endl;
                 
-                // Decripta
-                std::stringstream ss(std::string(result.data.begin(), result.data.end()));
+                // Decripta 
                 Ciphertext ct;
-                ct.load(context, ss);
+                ct.load(context, reinterpret_cast<const seal::seal_byte*>(result.data.data()), result.data.size());
 
                 Plaintext ptx;
                 decryptor.decrypt(ct, ptx);

@@ -15,6 +15,21 @@ PacketAssembler::process_packet(const char *packet, size_t packet_size) {
   TelemetryHeader hdr;
   memcpy(&hdr, packet, sizeof(TelemetryHeader));
 
+  // Sistema per liberare memoria quando ci sono troppi messaggi incompleti
+  /*auto it = messages.find(hdr.message_id);
+  // Se è un nuovo messaggio e ci sono troppi messaggi incompleti, libera spazio (costo O(1))
+  if (it == messages.end()) {
+      if (messages.size() > 100) {
+          // Rimuoviamo un blocco di messaggi (es. 20) per non doverlo rifare subito
+          auto erase_it = messages.begin();
+          int count = 0;
+          while (erase_it != messages.end() && count < 80) {
+              erase_it = messages.erase(erase_it);
+              count++;
+          }
+      }
+      it = messages.emplace(hdr.message_id, MessageInfo{}).first;
+  }*/
 
   auto it = messages.emplace(hdr.message_id, MessageInfo{}).first;
   MessageInfo& msg = it->second;

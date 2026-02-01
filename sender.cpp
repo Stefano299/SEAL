@@ -12,7 +12,6 @@
 #include <arpa/inet.h>
 #include <chrono>
 #include <thread>
-#include <mutex>
 #include "seal/seal.h"
 #include "message.h"
 #include "config.h"
@@ -26,7 +25,7 @@ un hash che viene calcolato anche considerando la porta di destinazione. Mandand
 su porte diverse, è come se ad ogni thread venisse associata una diversa porta.
 */
 
-void send_worker(int thread_id, std::string dest_ip, int total_rate, int n_msg, std::string ciphertext_str) {
+void send_worker(int thread_id, std::string dest_ip, int total_rate, int n_msg, const std::vector<seal::seal_byte>& ciphertext_buffer) {
     uint16_t port = BASE_PORT + thread_id;
 
     // Crea un socket UDP
@@ -43,7 +42,7 @@ void send_worker(int thread_id, std::string dest_ip, int total_rate, int n_msg, 
     inet_pton(AF_INET, dest_ip.c_str(), &dest_addr.sin_addr);
 
     // Prealloco chunk da inviare
-    uint32_t total_size = ciphertext_str.size();
+    uint32_t total_size = ciphertext_buffer.size();
     uint32_t num_chunks = (total_size + CHUNK_SIZE - 1) / CHUNK_SIZE;
     
     // Vettore di buffer pre allocati
@@ -69,7 +68,7 @@ void send_worker(int thread_id, std::string dest_ip, int total_rate, int n_msg, 
         
         // Copia il buffer del ciphertext
         memcpy(packet_buffers[i].data() + sizeof(TelemetryHeader), 
-               ciphertext_str.data() + offset, chunk_size);
+               ciphertext_buffer.data() + offset, chunk_size);
     }
 
     // Calcolo intervallo per thread
@@ -146,18 +145,17 @@ int main(int argc, char* argv[]) {
     Ciphertext ctx;
     encryptor.encrypt(ptx, ctx);
 
-    // Prepara buffer 
-    std::stringstream ss;
-    ctx.save(ss, seal::compr_mode_type::none);
-    std::string ciphertext_str = ss.str();
-    std::cout << "Ciphertext: " << ciphertext_str.size() << " bytes" << std::endl;
+    // seal_byte consente di non usare gli sstream (che obbligerebbero a fare una copia)
+    std::vector<seal::seal_byte> ciphertext_buffer(ctx.save_size(seal::compr_mode_type::none));
+    ctx.save(ciphertext_buffer.data(), ciphertext_buffer.size(), seal::compr_mode_type::none);
+    std::cout << "Ciphertext: " << ciphertext_buffer.size() << " bytes" << std::endl;
 
     std::cout << "Invio a " << dest_ip << " su porte " << BASE_PORT << "-" << (BASE_PORT + N_PORTS - 1) 
               << " con " << N_PORTS << " thread." << std::endl;
 
     std::vector<std::thread> threads;
     for (int i = 0; i < N_PORTS; i++) {
-        threads.emplace_back(send_worker, i, dest_ip, rate, n_msg, ciphertext_str);
+        threads.emplace_back(send_worker, i, dest_ip, rate, n_msg, std::cref(ciphertext_buffer));
     }
 
     for (auto& t : threads) {

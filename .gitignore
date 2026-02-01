@@ -3,3 +3,4 @@ build/
 example.cu
 .gitignore
 perf.txt
+records.txt
